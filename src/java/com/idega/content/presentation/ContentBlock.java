@@ -1,25 +1,19 @@
 package com.idega.content.presentation;
 
 import java.io.IOException;
-import java.rmi.RemoteException;
 import java.util.Iterator;
 
+import javax.el.ValueExpression;
 import javax.faces.component.UIComponent;
 import javax.faces.component.html.HtmlOutputText;
 import javax.faces.context.FacesContext;
-import javax.faces.el.ValueBinding;
+import javax.jcr.RepositoryException;
 
-import org.apache.commons.httpclient.HttpException;
-
-import com.idega.business.IBOLookup;
-import com.idega.business.IBOLookupException;
 import com.idega.content.business.ContentUtil;
 import com.idega.idegaweb.IWBundle;
-import com.idega.idegaweb.UnavailableIWContext;
 import com.idega.presentation.IWBaseComponent;
-import com.idega.presentation.IWContext;
-import com.idega.slide.business.IWSlideSession;
-import com.idega.slide.util.WebdavExtendedResource;
+import com.idega.repository.bean.RepositoryItem;
+import com.idega.repository.jcr.JCRItem;
 import com.idega.util.CoreConstants;
 import com.idega.webface.WFUtil;
 
@@ -28,10 +22,8 @@ import com.idega.webface.WFUtil;
  */
 public abstract class ContentBlock extends IWBaseComponent {
 
-	private WebdavExtendedResource resource = null;
+	private JCRItem resource = null;
 
-	private IWSlideSession slideSession;
-	
 	// this, parentContentViewer, should not be saved in save state
 	private ContentViewer parentContentViewer = null;
 
@@ -44,10 +36,10 @@ public abstract class ContentBlock extends IWBaseComponent {
 		return ContentUtil.getBundle();
 	}
 
-	protected WebdavExtendedResource getWebdavExtendedResource() {
+	protected JCRItem getRepositoryItem() {
 		return this.resource;
 	}
-		
+
 	protected boolean useFolders() {
 		return false;
 	}
@@ -56,48 +48,20 @@ public abstract class ContentBlock extends IWBaseComponent {
 		WFUtil.invoke(WebDAVList.WEB_DAV_LIST_BEAN_ID, "refresh", this, UIComponent.class);
 	}
 
-	public WebdavExtendedResource getWebdavExentededResource(String path) {
-		return getWebdavExentededResource(path, false);
-	}
-	
-	public WebdavExtendedResource getWebdavExentededResource(String path, boolean localResource) {
+	public <T extends RepositoryItem> T getWebdavExentededResource(String path) {
 		try {
-			IWSlideSession ss = getIWSlideSession();
-			return ss.getResource(path.replaceFirst(ss.getWebdavServerURI(), CoreConstants.EMPTY), localResource);
-		} catch (IBOLookupException e) {
-			e.printStackTrace();
-		} catch (UnavailableIWContext e) {
-			e.printStackTrace();
-		} catch (HttpException e) {
-			e.printStackTrace();
-		} catch (RemoteException e) {
-			e.printStackTrace();
-		} catch (IOException e) {
+			return (T)getRepositoryService().getRepositoryItem(path.replaceFirst(getRepositoryService().getWebdavServerURL(), CoreConstants.EMPTY));
+		} catch (RepositoryException e) {
 			e.printStackTrace();
 		}
 		return null;
 	}
 
-	protected IWSlideSession getIWSlideSession() {
-		if (this.slideSession == null) {
-			try {
-				this.slideSession = (IWSlideSession) IBOLookup.getSessionInstance(IWContext.getInstance(), IWSlideSession.class);
-			}
-			catch (IBOLookupException e) {
-				e.printStackTrace();
-			}
-			catch (UnavailableIWContext e) {
-				e.printStackTrace();
-			}
-		}
-		return this.slideSession;
-	}
-	
-	protected boolean removeClickedFile(WebdavExtendedResource resource) {
+	protected boolean removeClickedFile(RepositoryItem resource) {
 		try {
 			String parentPath = null;
 			if (resource != null) {
-				parentPath = resource.getParentPath().replaceFirst(getIWSlideSession().getWebdavServerURI(), "");
+				parentPath = resource.getParentPath().replaceFirst(getRepositoryService().getWebdavServerURL(), CoreConstants.EMPTY);
 			}
 			WFUtil.invoke(WebDAVList.WEB_DAV_LIST_BEAN_ID, "setWebDAVPath", parentPath, String.class);
 			WFUtil.invoke(WebDAVList.WEB_DAV_LIST_BEAN_ID, "setClickedFilePath", null, String.class);
@@ -107,29 +71,27 @@ public abstract class ContentBlock extends IWBaseComponent {
 			return false;
 		}
 	}
-	
+
 	/**
 	 * @return
 	 */
 	public String getCurrentResourcePath() {
-		
-		if (this.currentResourcePath != null) {
+		if (this.currentResourcePath != null)
 			return this.currentResourcePath;
-		}
-		ValueBinding vb = getValueBinding("currentResourcePath");
-		String returner = vb != null ? (String)vb.getValue(getFacesContext()) : null;
-		if(returner != null) {
+
+		ValueExpression ve = getValueExpression("currentResourcePath");
+		String returner = ve == null ? null : (String) ve.getValue(getFacesContext().getELContext());
+		if (returner instanceof String)
 			return returner;
-		}
-		
+
 		ContentViewer v = getContentViewer();
-		if(v!=null){
-			String tmp = v.getCurrentResourcePath(); 
-			return tmp;
-		}
-		return null;
+		if (v == null)
+			return null;
+
+		String tmp = v.getCurrentResourcePath();
+		return tmp;
 	}
-	
+
 	public ContentViewer getContentViewer(){
 		if(this.parentContentViewer == null){
 			UIComponent tmp = this;
@@ -146,7 +108,7 @@ public abstract class ContentBlock extends IWBaseComponent {
 		}
 		return this.parentContentViewer;
 	}
-	
+
 	@Override
 	public void encodeBegin(FacesContext context) throws IOException {
 		String webDavPath = (String) this.getAttributes().get("path");
@@ -162,33 +124,21 @@ public abstract class ContentBlock extends IWBaseComponent {
 			path = (String) WFUtil.invoke(webDavPath);
 		}
 		try {
-			WebdavExtendedResource oldRes = this.resource;
-			WebdavExtendedResource newRes = getIWSlideSession().getResource(path, false);
-			if (oldRes == null || oldRes.getName().equals(newRes.getName())) {
-				if ((!useFolders() && !newRes.isCollection() ) || (useFolders() && newRes.isCollection())) {
+			JCRItem oldRes = this.resource;
+			JCRItem newRes = getRepositoryService().getRepositoryItem(path);
+			if (newRes != null && (oldRes == null || oldRes.getName().equals(newRes.getName()))) {
+				if ((!useFolders() && !newRes.isCollection()) || (useFolders() && newRes.isCollection())) {
 					this.resource = newRes;
 					this.setInitialized(false);
 					getChildren().clear();
-				} else if ( !useFolders() && newRes.isCollection()) {
+				} else if (!useFolders() && newRes.isCollection()) {
 					this.resource = newRes;
 					this.setInitialized(false);
 					getChildren().clear();
 				}
 			}
 		}
-		catch (IBOLookupException e) {
-			e.printStackTrace();
-		}
-		catch (UnavailableIWContext e) {
-			e.printStackTrace();
-		}
-		catch (HttpException e) {
-			e.printStackTrace();
-		}
-		catch (RemoteException e) {
-			e.printStackTrace();
-		}
-		catch (IOException e) {
+		catch (RepositoryException e) {
 			e.printStackTrace();
 		}
 		super.encodeBegin(context);
@@ -197,8 +147,8 @@ public abstract class ContentBlock extends IWBaseComponent {
 	@Override
 	public void encodeChildren(FacesContext context) throws IOException {
 		super.encodeChildren(context);
-		for (Iterator iter = getChildren().iterator(); iter.hasNext();) {
-			UIComponent child = (UIComponent) iter.next();
+		for (Iterator<UIComponent> iter = getChildren().iterator(); iter.hasNext();) {
+			UIComponent child = iter.next();
 			renderChild(context, child);
 		}
 	}
@@ -207,25 +157,25 @@ public abstract class ContentBlock extends IWBaseComponent {
 	public boolean getRendersChildren() {
 		return true;
 	}
-	
+
 	protected HtmlOutputText getText(String localizationKey, String className) {
 		HtmlOutputText text = getBundle().getLocalizedText(localizationKey);
 		text.setStyleClass(className);
 		return text;
 	}
-	
+
 	protected HtmlOutputText getText(String localizationKey) {
 		return getText(localizationKey, "wf_smalltext");
 	}
-	
-	
+
+
 	/**
 	 * @param currentResourcePath The currentResourcePath to set.
 	 */
 	public void setCurrentResourcePath(String currentResourcePath) {
 		this.currentResourcePath = currentResourcePath;
 	}
-	
+
 	@Override
 	public Object saveState(FacesContext ctx) {
 		Object values[] = new Object[2];

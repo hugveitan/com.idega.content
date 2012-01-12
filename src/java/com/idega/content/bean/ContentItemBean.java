@@ -11,10 +11,9 @@ package com.idega.content.bean;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.Serializable;
-import java.rmi.RemoteException;
 import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Enumeration;
 import java.util.GregorianCalendar;
@@ -28,37 +27,31 @@ import javax.jcr.Node;
 import javax.jcr.PathNotFoundException;
 import javax.jcr.Property;
 import javax.jcr.RepositoryException;
-import javax.jcr.Session;
 import javax.jcr.ValueFormatException;
 
-import org.apache.commons.httpclient.HttpException;
-import org.apache.webdav.lib.WebdavResource;
-import org.apache.webdav.lib.util.WebdavStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 
-import com.idega.business.IBOLookup;
-import com.idega.business.IBOLookupException;
+import com.idega.block.rss.business.EntryData;
 import com.idega.content.business.ContentConstants;
 import com.idega.content.business.ContentItemHelper;
 import com.idega.content.themes.helpers.business.ThemesConstants;
 import com.idega.content.themes.helpers.business.ThemesHelper;
 import com.idega.core.accesscontrol.business.StandardRoles;
-import com.idega.core.content.RepositoryHelper;
-import com.idega.idegaweb.IWMainApplication;
 import com.idega.idegaweb.IWUserContext;
 import com.idega.presentation.IWContext;
-import com.idega.slide.business.IWSlideService;
-import com.idega.slide.business.IWSlideSession;
-import com.idega.slide.util.IWSlideConstants;
-import com.idega.slide.util.WebdavExtendedResource;
+import com.idega.repository.RepositoryService;
+import com.idega.repository.bean.RepositoryItem;
+import com.idega.repository.bean.RepositoryItemVersionInfo;
 import com.idega.util.CoreConstants;
+import com.idega.util.CoreUtil;
 import com.idega.util.IWTimestamp;
+import com.idega.util.ListUtil;
 import com.idega.util.expression.ELUtil;
 import com.sun.syndication.io.impl.DateParser;
 
 /**
  * <p>
- * Base bean for "content items", i.e. resources that can be read from the WebDav store
- * and displayed as content.
+ * Base bean for "content items", i.e. resources that can be read from the repository store and displayed as content.
  * </p>
  *  Last modified: $Date: 2009/06/22 14:17:17 $ by $Author: valdas $
  *
@@ -68,6 +61,9 @@ import com.sun.syndication.io.impl.DateParser;
 public abstract class ContentItemBean implements Serializable, ContentItem {
 
 	private static final long serialVersionUID = -1620171698501618358L;
+
+	@Autowired
+	private RepositoryService repository;
 
     public static final String DISPLAYNAME = "displayname";
     public static final String GETCONTENTLANGUAGE = "getcontentlanguage";
@@ -96,7 +92,8 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 
 	private ContentItemCase _caseBean = null;
 
-	private Map _itemFields = null;
+
+	private Map<String, List<ContentItemField>> _itemFields = null;
 	private Map<String, Locale> _locales = null;
 
 	public final static String FIELDNAME_ATTACHMENT = "attachment";
@@ -114,19 +111,21 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 	private final static String[] ACTION_EXISTS_ARRAY = new String[] {ContentConstants.CONTENT_ITEM_ACTION_DELETE, ContentConstants.CONTENT_ITEM_ACTION_EDIT};
 	private final static String[] ACTION_NOT_EXISTS_ARRAY = new String[] {ContentConstants.CONTENT_ITEM_ACTION_CREATE};
 
-	private List versions;
+	private List<RepositoryItemVersionInfo> versions;
 
 	private String categories = null; // This string is parsed from WebDavResource
 
 	private boolean setPublishedDateByDefault = false;
 	//private boolean persistToWebDav=false;
 	//private boolean persistToJCR=true;
-	private Session session;
+//	private Session session;
 	/**
 	 * Default constructor.
 	 */
 	public ContentItemBean() {}
 
+
+	@Override
 	public Locale getLocale() {
 		if(this._locale==null){
 			IWContext iwc = IWContext.getIWContext(FacesContext.getCurrentInstance());
@@ -188,19 +187,16 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 	 */
 	public ContentItemField getItemField(String key) {
 		if (this._itemFields == null) {
-			this._itemFields = new HashMap();
+			this._itemFields = new HashMap<String, List<ContentItemField>>();
 		}
-		ContentItemField field = (ContentItemField) this._itemFields.get(key + getLanguage());
-		return field;
+		List<ContentItemField> fields = this._itemFields.get(key + getLanguage());
+		return ListUtil.isEmpty(fields) ? null : fields.get(0);
 	}
 
+	public List<ContentItemField> getAttachments() { return getItemFields(FIELDNAME_ATTACHMENT); }
+	public void setAttachment(List<ContentItemField> l) { setItemFields(FIELDNAME_ATTACHMENT, l); }
 
-	/*
-	 *
-	 */
-	public List getAttachments() { return getItemFields(FIELDNAME_ATTACHMENT); }
-	public void setAttachment(List l) { setItemFields(FIELDNAME_ATTACHMENT, l); }
-
+	@Override
 	public Object getValue(String fieldName){
 		ContentItemField field = getItemField(fieldName);
 		if(field != null){
@@ -210,12 +206,15 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		}
 	}
 
+	@Override
 	public void setValue(String fieldName, Object value){
 		setItemFieldValue(fieldName, value);
 	}
 
+	@Override
 	public abstract String[] getContentFieldNames();
 
+	@Override
 	public String[] getToolbarActions(){
 		if(getExists()){
 			return ACTION_EXISTS_ARRAY;
@@ -229,27 +228,34 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 	 */
 	public void setItemField(String key, ContentItemField field) {
 		if (this._itemFields == null) {
-			this._itemFields = new HashMap();
+			this._itemFields = new HashMap<String, List<ContentItemField>>();
 		}
-		this._itemFields.put(key + getLanguage(), field);
+
+		key = key + getLanguage();
+		List<ContentItemField> items = _itemFields.get(key);
+		if (items == null) {
+			items = new ArrayList<ContentItemField>();
+			this._itemFields.put(key, items);
+		}
+		items.add(field);
 	}
 
 	/**
 	 * Returns the list of item fields with the specified key.
 	 */
-	public List getItemFields(String key) {
+	public List<ContentItemField> getItemFields(String key) {
 		if (this._itemFields == null) {
 			return null;
 		}
-		return (List) this._itemFields.get(key + getLanguage());
+		return this._itemFields.get(key + getLanguage());
 	}
 
 	/**
 	 *Sets the list of item fields with the specified key.
 	 */
-	public void setItemFields(String key, List fields) {
+	public void setItemFields(String key, List<ContentItemField> fields) {
 		if (this._itemFields == null) {
-			this._itemFields = new HashMap<String, List>();
+			this._itemFields = new HashMap<String, List<ContentItemField>>();
 		}
 		this._itemFields.put(key + getLanguage(), fields);
 	}
@@ -259,12 +265,12 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 	 */
 	public void setItemFieldValue(String key, Object value) {
 		if (this._itemFields == null) {
-			this._itemFields = new HashMap();
+			this._itemFields = new HashMap<String, List<ContentItemField>>();
 		}
 		ContentItemField field = getItemField(key);
 		if (field == null) {
 			String type = null;
-			if(value instanceof String){
+			if (value instanceof String) {
 				type = ContentItemField.FIELD_TYPE_STRING;
 			} else if(value instanceof Timestamp) {
 				type = ContentItemField.FIELD_TYPE_TIMESTAMP;
@@ -324,6 +330,7 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 	 * @throws IOException
 	 * @throws Exception If there is an exception loading
 	 */
+	@Override
 	public void load() throws IOException {
 		if(!isLoaded()){
 			String resourcePath = getResourcePath();
@@ -349,115 +356,85 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 	 * @throws IOException
 	 */
 	protected boolean load(String path) throws IOException {
+		clear();
+		return loadFromJCR(path);
+	}
+
+//	protected boolean loadFromWebDav(String path) throws IOException,
+//			RemoteException, HttpException {
+//		IWUserContext iwuc = IWContext.getInstance();
+//		boolean returner = true;
+//		try {
+//			IWSlideSession session = getIWSlideSession(iwuc);
+//
+//			WebdavExtendedResource webdavResource = session.getResource(path, Boolean.FALSE);
+//			webdavResource.setProperties();
+//
+//			//here I don't use the varible 'path' since it can actually be the URI
+//			setResourcePath(webdavResource.getPath());
+//			setName(webdavResource.getDisplayName());
+//
+//			//String versionName = webdavResource.getVersionName();
+//			/*List versions = VersionHelper.getAllVersions(webdavResource);
+//			if(versions!=null){
+//				setVersions(versions);
+//				String latestVersion = VersionHelper.getLatestVersionName(versions);
+//				setVersionName(latestVersion);
+//			}*/
+//
+//			String createDate = webdavResource.getCreationDateString();
+//			if(createDate != null){
+//				setCreationDate(new IWTimestamp(createDate).getTimestamp());
+//			}
+//
+//			long lLastmodified = webdavResource.getGetLastModified();
+//			IWTimestamp lastModified = new IWTimestamp(lLastmodified);
+//			setLastModifiedDate(lastModified.getTimestamp());
+//
+//			setWebDavResourceCategories(webdavResource.propfindMethod(IWSlideConstants.PROPERTYNAME_CATEGORY));
+//			returner = load(webdavResource);
+//			setExists(true);
+////			System.out.print("["+this.toString()+"]:");
+////			System.out.println("Load "+((returner)?"":"not")+" successful of path "+path);
+//		} catch(HttpException e) {
+//			if(e.getReasonCode()==WebdavStatus.SC_NOT_FOUND) {
+//				/*if(isAutoCreateResource()){
+//					//in this case ignore the error message that it isn't fount
+//					return true;
+//				}
+//				else{*/
+//					setRendered(false);
+//					return false;
+//				//}
+//			} else {
+//				throw e;
+//			}
+//		}
+//		return returner;
+//	}
+
+	protected boolean loadFromJCR(String path) throws IOException {
 		if (isLoaded())
 			return true;
 
-		clear();
-		boolean returner = false;
-		if(isPersistToWebDav()){
-			returner = loadFromWebDav(path);
-		}
-		else if(isPersistToJCR()){
-			returner = loadFromJCR(path);
-		}
-
-		setLoaded(returner);
-		return returner;
-	}
-
-	protected boolean loadFromWebDav(String path) throws IOException,
-			RemoteException, HttpException {
-		IWUserContext iwuc = IWContext.getInstance();
+		//	TODO: test it
 		boolean returner = true;
 		try {
-			IWSlideSession session = getIWSlideSession(iwuc);
+//			Session session = getSession();
+			Node folderNode = getRepositoryService().getNode(path);//session.getRootNode().getNode(path);
 
-			WebdavExtendedResource webdavResource = session.getResource(path, Boolean.FALSE);
-			webdavResource.setProperties();
+			//here I don't use the variable 'path' since it can actually be the URI
 
-			//here I don't use the varible 'path' since it can actually be the URI
-			setResourcePath(webdavResource.getPath());
-			setName(webdavResource.getDisplayName());
-
-			//String versionName = webdavResource.getVersionName();
-			/*List versions = VersionHelper.getAllVersions(webdavResource);
-			if(versions!=null){
-				setVersions(versions);
-				String latestVersion = VersionHelper.getLatestVersionName(versions);
-				setVersionName(latestVersion);
-			}*/
-
-			String createDate = webdavResource.getCreationDateString();
-			if(createDate != null){
-				setCreationDate(new IWTimestamp(createDate).getTimestamp());
-			}
-
-			long lLastmodified = webdavResource.getGetLastModified();
-			IWTimestamp lastModified = new IWTimestamp(lLastmodified);
-			setLastModifiedDate(lastModified.getTimestamp());
-
-			setWebDavResourceCategories(webdavResource.propfindMethod(IWSlideConstants.PROPERTYNAME_CATEGORY));
-			returner = load(webdavResource);
-			setExists(true);
-//			System.out.print("["+this.toString()+"]:");
-//			System.out.println("Load "+((returner)?"":"not")+" successful of path "+path);
-		} catch(HttpException e) {
-			if(e.getReasonCode()==WebdavStatus.SC_NOT_FOUND) {
-				/*if(isAutoCreateResource()){
-					//in this case ignore the error message that it isn't fount
-					return true;
-				}
-				else{*/
-					setRendered(false);
-					return false;
-				//}
-			} else {
-				throw e;
-			}
-		}
-		return returner;
-	}
-
-	/**
-	 * @param webdavResource
-	 * @throws IOException
-	 */
-	protected boolean load(WebdavExtendedResource webdavResource) throws IOException {
-		return true;
-	}
-
-	protected boolean loadFromJCR(String path) throws IOException,
-	RemoteException, HttpException {
-		//IWContext iwc = IWContext.getInstance();
-		boolean returner = true;
-		try {
-			//IWSlideSession session = getIWSlideSession(iwuc);
-			Session session = getSession();
-			Node folderNode = session.getRootNode().getNode(path);
-
-			//WebdavExtendedResource webdavResource = session.getWebdavResource(path);
-			//webdavResource.setProperties();
-
-			//here I don't use the varible 'path' since it can actually be the URI
 			setResourcePath(folderNode.getPath());
 			Property displayNameProp = folderNode.getProperty(DISPLAYNAME);
 			if(displayNameProp!=null){
 				setName(displayNameProp.getValue().getString());
 			}
 
-			//String versionName = webdavResource.getVersionName();
-			/*List versions = VersionHelper.getAllVersions(webdavResource);
-			if(versions!=null){
-				setVersions(versions);
-				String latestVersion = VersionHelper.getLatestVersionName(versions);
-				setVersionName(latestVersion);
-			}*/
-
 			Property createDateProp = folderNode.getProperty(CREATIONDATE);
 			if(createDateProp!=null){
 				try{
 					Calendar creationDate = createDateProp.getDate();
-					//String sCreateDate = createDateProp.getValue().getString();
 					setCreationDate(new IWTimestamp((GregorianCalendar)creationDate).getTimestamp());
 				}
 				catch(Exception e){
@@ -467,13 +444,8 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 
 			Property lastmodifiedProp = folderNode.getProperty(GETLASTMODIFIED);
 			if(lastmodifiedProp!=null){
-				//long lLastmodified = Long.parseLong(lastmodifiedProp.getValue().getString());
 				try{
-					//long lLastmodified = lastmodifiedProp.getValue().getLong();
-					//IWTimestamp lastModified = new IWTimestamp(lLastmodified);
-					//setLastModifiedDate(lastModified.getTimestamp());
 					Calendar creationDate = lastmodifiedProp.getDate();
-					//String sCreateDate = createDateProp.getValue().getString();
 					setLastModifiedDate(new IWTimestamp((GregorianCalendar)creationDate).getTimestamp());
 				}
 				catch(ValueFormatException vfe){
@@ -482,7 +454,7 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 			}
 
 			try{
-				Property categoriesProp = folderNode.getProperty(IWSlideConstants.PROPERTYNAME_CATEGORY);
+				Property categoriesProp = folderNode.getProperty("category"/*IWSlideConstants.PROPERTYNAME_CATEGORY*/);
 				if(categoriesProp!=null){
 					String categories = categoriesProp.getValue().getString();
 					setCategories(categories);
@@ -492,8 +464,6 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 
 			returner = load(folderNode);
 			setExists(true);
-		//	System.out.print("["+this.toString()+"]:");
-		//	System.out.println("Load "+((returner)?"":"not")+" successful of path "+path);
 		} catch(PathNotFoundException e) {
 			//if(e.getReasonCode()==WebdavStatus.SC_NOT_FOUND) {
 				/*if(isAutoCreateResource()){
@@ -515,19 +485,8 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		return returner;
 	}
 
-	protected boolean load(Node folderNode) throws IOException, RepositoryException{
+	protected boolean load(Node folderNode) throws IOException, RepositoryException {
 		return true;
-	}
-
-	protected IWSlideSession getIWSlideSession(IWUserContext iwuc){
-		IWSlideSession session=null;
-		try {
-			session = (IWSlideSession)IBOLookup.getSessionInstance(iwuc,IWSlideSession.class);
-		}
-		catch (IBOLookupException e) {
-			e.printStackTrace();
-		}
-		return session;
 	}
 
 	public Timestamp getPublishedDate() {
@@ -541,18 +500,22 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		}
 	}
 
+	@Override
 	public Timestamp getCreationDate() {
 		return (Timestamp)getValue(FIELDNAME_CREATION_DATE);
 	}
 
+	@Override
 	public Timestamp getLastModifiedDate() {
 		return (Timestamp)getValue(FIELDNAME_LAST_MODIFIED_DATE);
 	}
 
+	@Override
 	public String getResourcePath() {
 		return (String)getValue(FIELDNAME_RESOURCE_PATH);
 	}
 
+	@Override
 	public String getVersionName(){
 		return (String)getValue(FIELDNAME_VERSION_NAME);
 	}
@@ -561,6 +524,7 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		setValue(FIELDNAME_VERSION_NAME,name);
 	}
 
+	@Override
 	public Boolean getRendered() {
 		return this.doRender;
 	}
@@ -646,82 +610,44 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 	/**
 	 * @return Returns the versions.
 	 */
-	public List getVersions() {
+	public List<RepositoryItemVersionInfo> getVersions() {
 		return this.versions;
 	}
 
 	/**
 	 * @param versions The versions to set.
 	 */
-	public void setVersions(List versions) {
+	public void setVersions(List<RepositoryItemVersionInfo> versions) {
 		this.versions = versions;
 	}
 
-	/**
-	 * <p>
-	 * TODO tryggvil describe method getIWSlideService
-	 * </p>
-	 * @param iwuc
-	 * @return
-	 */
-	protected IWSlideService getIWSlideService(IWUserContext iwuc) {
-		try {
-			IWSlideService slideService = IBOLookup.getServiceInstance(iwuc.getApplicationContext(),IWSlideService.class);
-			return slideService;
-		}
-		catch (IBOLookupException e) {
-			throw new RuntimeException(e);
-		}
-	}
-
-	protected WebdavExtendedResource getWebdavResource(){
+	protected RepositoryItem getRepositoryItem() {
 		String resourcePath = getResourcePath();
-		IWUserContext iwuc = IWContext.getInstance();
-		IWSlideSession session = getIWSlideSession(iwuc);
-		WebdavExtendedResource webdavResource;
+		IWUserContext iwuc = CoreUtil.getIWContext();
+		RepositoryItem item = null;
 		try {
-			webdavResource = session.getWebdavResource(resourcePath);
-			return webdavResource;
+			item = getRepositoryService().getRepositoryItem(iwuc.getLoggedInUser(), resourcePath);
+		} catch (RepositoryException e) {
+			e.printStackTrace();
 		}
-		catch (Exception e) {
-			throw new RuntimeException(e);
-		}
+		return item;
 	}
 
 	protected Node getNode(){
 		String resourcePath = getResourcePath();
 		try {
-			return getSession().getRootNode().getNode(resourcePath);
+			return getRepositoryService().getNode(resourcePath);
 		}
 		catch (Exception e) {
 			throw new RuntimeException(e);
 		}
 	}
 
-	public Session getSession() throws RepositoryException{
-		if(session==null){
-			IWContext iwc = IWContext.getInstance();
-			Session session = iwc.getRepositorySession();
-			return session;
-		}
-		else{
-			return session;
-		}
-	}
-
-	public void setSession(Session session){
-		this.session=session;
-	}
-
+	@Override
 	public void delete(){
 		try {
 			String resourcePath = getResourcePath();
-			if(isPersistToWebDav()){
-				deleteFromWebDav(resourcePath);
-			}
-			else if(isPersistToJCR()){
-				deleteFromJCR(resourcePath);
-			}
+			deleteFromJCR(resourcePath);
 			System.out.println("Deleted: "+resourcePath+" successfully");
 		}
 		catch (Exception e) {
@@ -729,21 +655,11 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		}
 	}
 
-	private void deleteFromWebDav(String resourcePath) throws HttpException, IOException {
-		WebdavExtendedResource webdavResource = getWebdavResource();
-		webdavResource.deleteMethod();
-		webdavResource.close();
-		clear();
-	}
 
 	private void deleteFromJCR(String resourcePath) throws Exception {
-		Node folderNode = getNode();
-		folderNode.remove();
+		getRepositoryService().delete(resourcePath);
 		clear();
-		getSession().save();
 	}
-
-
 
 	/**
 	 * @return Returns the loaded.
@@ -752,8 +668,6 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		return this.loaded;
 	}
 
-
-
 	/**
 	 * @param loaded The loaded to set.
 	 */
@@ -761,7 +675,7 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		this.loaded = loaded;
 	}
 
-	public void setWebDavResourceCategories(Enumeration webDavResourceCategories) {
+	public void setWebDavResourceCategories(Enumeration<String> webDavResourceCategories) {
 		if (webDavResourceCategories == null) {
 			setCategories(null);
 		}
@@ -797,9 +711,8 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 	 * @param moduleClass
 	 * @return String of SyndFeed xml if entry was successfully added to feed, otherwise - null
 	 */
-	public String getFeedEntryAsXML(IWContext iwc, String feedTitle, String feedDescription, String title, String description,
-			String body, String author, List<String> categories, String source, String comment, String moduleClass,
-			String linkToComments) {
+	public String getFeedEntryAsXML(IWContext iwc, String feedTitle, String feedDescription, String moduleClass,
+			EntryData entryData) {
 
 		ThemesHelper themesHelper = null;
 		try {
@@ -809,7 +722,6 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		}
 
 		Timestamp published = getPublishedDate();
-		Timestamp updated = getLastModifiedDate();
 		String server = themesHelper.getFullServerName(iwc);
 		StringBuffer articleURL = new StringBuffer(server);
 		ContentItemHelper helper = new ContentItemHelper(getResourcePath());
@@ -833,28 +745,21 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 			creatorId = String.valueOf(getCreatedByUserId());
 		}
 
-		if (linkToComments == null) {
-			linkToComments = themesHelper.getArticleCommentLink(iwc, pageUri);
+		if (entryData.getLinkToComments() == null) {
+			entryData.setLinkToComments(themesHelper.getArticleCommentLink(iwc, pageUri));
 		}
 
-		description = getFixedDescription(description);
+		String fixedDescription = getFixedDescription(entryData.getDescription());
+		entryData.setDescription(fixedDescription);
 
 		ContentItemFeedBean feedBean = new ContentItemFeedBean(iwc, ContentItemFeedBean.FEED_TYPE_ATOM_1);
-		return getFeedEntryAsXML(feedTitle, feedDescription, title,
-				description, body, author, categories, source, comment,
-				linkToComments, published, updated, server, articleURL.toString(),
-				creatorId, feedBean);
+		entryData.setLink(articleURL.toString());
+		return getFeedEntryAsXML(feedTitle, feedDescription,server, feedBean, entryData);
 	}
 
-
-	public String getFeedEntryAsXML(String feedTitle, String feedDescription,
-			String title, String description, String body, String author,
-			List<String> categories, String source, String comment,
-			String linkToComments, Timestamp published, Timestamp updated,
-			String server, String articleURL, String creatorId,
-			ContentItemFeedBean feedBean) {
-		return feedBean.getFeedEntryAsXML(feedTitle, server, feedDescription, title, updated, published, description,
-				body, author, getLanguage(), categories, articleURL, source, comment, linkToComments, creatorId);
+	public String getFeedEntryAsXML(String feedTitle, String feedDescription, String server,ContentItemFeedBean feedBean, EntryData entryData) {
+		entryData.setLanguage(getLanguage());
+		return feedBean.getFeedEntryAsXML(feedTitle, server, feedDescription, entryData);
 	}
 
 	private String getFixedDescription(String description) {
@@ -936,6 +841,12 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		this.setPublishedDateByDefault = setPublishedDateByDefault;
 	}
 
+	protected RepositoryService getRepositoryService() {
+		if (repository == null) {
+			ELUtil.getInstance().autowire(this);
+		}
+		return repository;
+	}
 
 	/*public void setPersistToWebDav(boolean persistToWebDav) {
 		this.persistToWebDav = persistToWebDav;
@@ -956,16 +867,7 @@ public abstract class ContentItemBean implements Serializable, ContentItem {
 		return getContentRepositoryMode().isPersistToJCR();
 	}
 
-	public RepositoryHelper getRepositoryHelper() {
-		return (RepositoryHelper)ELUtil.getInstance().getBean(RepositoryHelper.SPRING_BEAN_IDENTIFIER);
-	}
-
 	public ContentRepositoryMode getContentRepositoryMode(){
 		return (ContentRepositoryMode)ELUtil.getInstance().getBean(ContentRepositoryMode.SPRING_BEAN_IDENTIFIER);
-	}
-
-	protected InputStream getStream(WebdavResource resource) throws IOException {
-		IWSlideService slideService = IBOLookup.getServiceInstance(IWMainApplication.getDefaultIWApplicationContext(), IWSlideService.class);
-		return slideService.getInputStream(resource.getPath());
 	}
 }

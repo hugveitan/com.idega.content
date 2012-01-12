@@ -17,9 +17,13 @@ import javax.jcr.RepositoryException;
 import javax.jcr.Session;
 import javax.jcr.Value;
 
-import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Service;
+
+import com.idega.repository.RepositoryService;
+import com.idega.util.expression.ELUtil;
 
 /**
  * <p>
@@ -31,23 +35,18 @@ import org.springframework.context.annotation.Scope;
  * @author <a href="mailto:tryggvil@idega.com">Tryggvi Larusson</a>
  * @version $Revision: 1.1 $
  */
- 
 @Service
 @Scope(BeanDefinition.SCOPE_SINGLETON)
 public class IdegaRepositoryBean implements Repository {
-	
-	private Repository repository;
 
-	public IdegaRepositoryBean(){
-		//this.repository=(Repository) Class.forName("com.idega.slide.jcr.SlideRepository").newInstance();
-		//this.repository=(Repository) ELUtil.getInstance().getBean(SlideRepository.SPRING_BEAN_IDENTIFIER);
-	}
+	@Autowired
+	private RepositoryService repository;
 
-	protected Repository getRepository(){
-		//TODO: Implement dynamic support for more repositories
-		if(this.repository==null){
-		}
-		return this.repository;
+	protected RepositoryService getRepository(){
+		if (repository == null)
+			ELUtil.getInstance().autowire(this);
+
+		return repository;
 	}
 
 	public String getDescriptor(String key) {

@@ -40,6 +40,7 @@ import com.idega.content.themes.helpers.business.ThemesConstants;
 import com.idega.content.themes.helpers.business.ThemesHelper;
 import com.idega.content.themes.presentation.PageInfo;
 import com.idega.content.themes.presentation.SiteInfo;
+import com.idega.core.accesscontrol.business.AccessControl;
 import com.idega.core.accesscontrol.business.AccessController;
 import com.idega.core.accesscontrol.business.StandardRoles;
 import com.idega.core.builder.business.BuilderService;
@@ -48,6 +49,7 @@ import com.idega.core.builder.data.CachedDomain;
 import com.idega.core.builder.data.ICDomain;
 import com.idega.core.builder.data.ICPage;
 import com.idega.core.builder.data.ICPageBMPBean;
+import com.idega.core.business.DefaultSpringBean;
 import com.idega.core.data.ICTreeNode;
 import com.idega.core.localisation.business.ICLocaleBusiness;
 import com.idega.data.TreeableEntity;
@@ -57,7 +59,6 @@ import com.idega.idegaweb.IWMainApplicationSettings;
 import com.idega.idegaweb.IWResourceBundle;
 import com.idega.presentation.IWContext;
 import com.idega.servlet.filter.IWWelcomeFilter;
-import com.idega.user.data.GroupBMPBean;
 import com.idega.util.ArrayUtil;
 import com.idega.util.CoreConstants;
 import com.idega.util.CoreUtil;
@@ -68,7 +69,7 @@ import com.idega.util.expression.ELUtil;
 
 @Scope(BeanDefinition.SCOPE_SINGLETON)
 @Service(LucidEngine.SPRING_BEAN_IDENTIFIER)
-public class LucidEngineImpl implements LucidEngine {
+public class LucidEngineImpl extends DefaultSpringBean implements LucidEngine {
 
 	private static final long serialVersionUID = 201381337142886542L;
 	private static final Logger LOGGER = Logger.getLogger(LucidEngineImpl.class.getName());
@@ -250,7 +251,7 @@ public class LucidEngineImpl implements LucidEngine {
 
 	public Collection<SelectItem> getAvailableLocales() {
 		List<SelectItem> availableLocales = new ArrayList<SelectItem>();
-		
+
 		List<Locale> locales = ICLocaleBusiness.getListOfLocalesJAVA();
 		if (ListUtil.isEmpty(locales)) {
 			return availableLocales;
@@ -1393,12 +1394,11 @@ public class LucidEngineImpl implements LucidEngine {
 			}
 
 			List<String> decreaseLevelOnTop = new ArrayList<String>();
-			@SuppressWarnings("unchecked")
-			Collection<ICTreeNode> siblings = newRootPage.getParentNode().getChildren();
+			Collection<? extends ICTreeNode> siblings = newRootPage.getParentNode().getChildren();
 			if (siblings == null) {
 				return false;
 			}
-			for (Iterator<ICTreeNode> iter = siblings.iterator(); iter.hasNext();) {
+			for (Iterator<? extends ICTreeNode> iter = siblings.iterator(); iter.hasNext();) {
 				element = iter.next();
 				page = getThemesHelper().getThemesService().getICPage(element.getId());
 				newPage = getThemesHelper().getThemesService().getICPage(newRoot);
@@ -1771,7 +1771,6 @@ public class LucidEngineImpl implements LucidEngine {
 		return getThemesHelper().getThemesService().getBuilderService().setProperty(pageID, ThemesConstants.MINUS_ONE, method, new String[]{title}, appl);
 	}
 
-	@SuppressWarnings("unchecked")
 	public String changePageUriAfterPageWasMoved(String pageKey) {
 		if (pageKey == null) {
 			return null;
@@ -1790,9 +1789,9 @@ public class LucidEngineImpl implements LucidEngine {
 			return null;
 		}
 
-		Collection<ICPage> children = page.getChildren();
+		Collection<? extends ICTreeNode> children = page.getChildren();
 		if (children != null) {
-			for (Iterator<ICPage> it = children.iterator(); it.hasNext();) {
+			for (Iterator<? extends ICTreeNode> it = children.iterator(); it.hasNext();) {
 				return changePageUriAfterPageWasMoved(it.next().getId());
 			}
 		}
@@ -1850,8 +1849,8 @@ public class LucidEngineImpl implements LucidEngine {
 		}
 
 		boolean restrictedAccess = Boolean.TRUE.toString().equalsIgnoreCase(availability);
-		String usersGroupId = String.valueOf(GroupBMPBean.GROUP_ID_USERS);
-		String everyOneGroupId = String.valueOf(GroupBMPBean.GROUP_ID_EVERYONE);
+		String usersGroupId = String.valueOf(AccessControl._GROUP_ID_USERS);
+		String everyOneGroupId = String.valueOf(AccessControl._GROUP_ID_EVERYONE);
 		try {
 			iwc.getAccessController().setPermission(AccessController.CATEGORY_PAGE_INSTANCE, iwc, usersGroupId, pageKey, AccessController.PERMISSION_KEY_VIEW,
 					Boolean.TRUE);
