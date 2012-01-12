@@ -50,7 +50,7 @@ public abstract class ContentBlock extends IWBaseComponent {
 
 	public <T extends RepositoryItem> T getWebdavExentededResource(String path) {
 		try {
-			return getRepositoryService().getRepositoryItem(path.replaceFirst(getRepositoryService().getWebdavServerURL(), CoreConstants.EMPTY));
+			return (T)getRepositoryService().getRepositoryItem(path.replaceFirst(getRepositoryService().getWebdavServerURL(), CoreConstants.EMPTY));
 		} catch (RepositoryException e) {
 			e.printStackTrace();
 		}
