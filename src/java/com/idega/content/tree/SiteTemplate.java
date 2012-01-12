@@ -1,8 +1,11 @@
 package com.idega.content.tree;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 
-public class SiteTemplate extends Template {
+public class SiteTemplate extends Template implements Serializable {
+	
+	private static final long serialVersionUID = 6186247784825422897L;
 	
 	private ArrayList <SiteTemplate> childStructure = new ArrayList <SiteTemplate> ();
 	
